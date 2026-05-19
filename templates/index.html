@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ISO 15118 Charging Protocol Emulator</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg0:#0a0d14; --bg1:#10131e; --bg2:#181c2a; --bg3:#1e2438;
+  --border:#252d45; --border2:#2d3755;
+  --text:#e2e8f0; --muted:#64748b; --dim:#475569;
+  --ev:#10b981; --evse:#60a5fa; --warn:#f59e0b; --err:#ef4444;
+  --purple:#a78bfa; --tls:#34d399;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;min-height:100%;background:var(--bg0);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;overflow:auto}
+body{display:flex;flex-direction:column;min-width:900px;min-height:600px}
+
+/* ── TOP BAR ── */
+.topbar{flex-shrink:0;background:var(--bg1);border-bottom:1px solid var(--border);padding:0 14px;height:46px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:50}
+.topbar-title{font-size:13px;font-weight:800;color:var(--text);white-space:nowrap}
+.topbar-sub{font-size:9px;color:var(--muted);white-space:nowrap}
+.topbar-sep{flex:1}
+.cfg-row{display:flex;align-items:center;gap:5px;flex-shrink:0}
+.cfg-label{font-size:10px;color:var(--muted);white-space:nowrap}
+.cfg-input{background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:11px;padding:3px 6px;outline:none;width:52px}
+.auth-row{gap:3px}
+.auth-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:4px;color:var(--muted);font-size:10px;font-weight:700;padding:3px 8px;cursor:pointer;transition:all .15s}
+.auth-btn.active.eim{background:rgba(96,165,250,.15);border-color:var(--evse);color:var(--evse)}
+.auth-btn.active.pnc{background:rgba(52,211,153,.15);border-color:var(--tls);color:var(--tls)}
+.auth-btn:hover:not(.active){color:var(--text)}
+.cfg-slider-row{gap:6px}
+.cfg-slider{-webkit-appearance:none;appearance:none;width:90px;height:4px;border-radius:2px;background:var(--bg3);outline:none;cursor:pointer;flex-shrink:0}
+.cfg-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border-radius:50%;background:var(--ev);cursor:pointer;border:2px solid var(--bg1)}
+.cfg-slider::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--ev);cursor:pointer;border:2px solid var(--bg1)}
+.cfg-slider-val{font-size:11px;font-weight:700;color:var(--text);font-family:monospace;min-width:32px;text-align:right}
+.cfg-input:focus{border-color:var(--ev)}
+select.cfg-input{width:auto;cursor:pointer}
+.toggle{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--muted);cursor:pointer;flex-shrink:0}
+.toggle input{cursor:pointer;accent-color:var(--tls)}
+.btn-start{background:var(--ev);border:none;border-radius:7px;color:#fff;font-size:12px;font-weight:700;padding:6px 16px;cursor:pointer;transition:opacity .15s;white-space:nowrap;flex-shrink:0}
+.btn-start:hover{opacity:.85}.btn-start:disabled{opacity:.35;cursor:not-allowed}
+.btn-stop{background:var(--err);border:none;border-radius:7px;color:#fff;font-size:12px;font-weight:700;padding:6px 14px;cursor:pointer;display:none;transition:opacity .15s;flex-shrink:0}
+.btn-stop.visible{display:block}.btn-stop:hover{opacity:.85}
+.phase-pill{background:var(--bg3);border:1px solid var(--border2);border-radius:20px;font-size:10px;font-weight:700;padding:3px 10px;color:var(--muted);flex-shrink:0}
+
+/* ── MAIN GRID ── */
+.main{flex:1;display:grid;grid-template-columns:230px 1fr 230px;gap:5px;padding:5px 5px 0;overflow:hidden;min-height:0}
+
+/* ── SIDE PANELS ── */
+.side-panel{background:var(--bg1);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;gap:7px;padding:10px;overflow:hidden;min-height:0}
+.panel-heading{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.panel-heading.ev{color:var(--ev)}.panel-heading.evse{color:var(--evse)}
+.panel-sub-text{font-size:9px;color:var(--muted)}
+.divider{height:1px;background:var(--border);flex-shrink:0}
+.scope-label{font-size:9px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+canvas.scope{width:100%;height:72px;background:#050810;border-radius:6px;border:1px solid var(--border);display:block}
+.cp-state-badge{display:flex;align-items:center;justify-content:space-between;background:var(--bg3);border:1px solid var(--border2);border-radius:7px;padding:6px 9px;flex-shrink:0}
+.cp-state-left{display:flex;flex-direction:column;gap:1px}
+.cp-state-label{font-size:11px;font-weight:800;font-family:monospace}
+.cp-state-desc{font-size:9px;color:var(--muted)}
+.cp-state-right{display:flex;flex-direction:column;align-items:flex-end;gap:1px}
+.cp-duty{font-size:17px;font-weight:800;font-family:monospace;color:var(--warn)}
+.cp-duty-sub{font-size:9px;color:var(--muted)}
+.metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.metric{background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:5px 7px}
+.metric-label{font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+.metric-val{font-size:13px;font-weight:800;font-family:monospace;color:var(--text);margin-top:1px}
+.metric-val.green{color:var(--ev)}.metric-val.blue{color:var(--evse)}.metric-val.amber{color:var(--warn)}.metric-val.purple{color:var(--purple)}
+.soc-wrap{background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:7px 9px;flex-shrink:0}
+.soc-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.soc-label{font-size:9px;color:var(--muted);font-weight:700;text-transform:uppercase}
+.soc-pct{font-size:15px;font-weight:800;font-family:monospace;color:var(--ev)}
+.soc-bar-bg{background:var(--bg0);border-radius:4px;height:8px;overflow:hidden}
+.soc-bar-fill{height:100%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:4px;transition:width 1.5s}
+.soc-footer{display:flex;justify-content:space-between;margin-top:2px}
+.soc-foot-label{font-size:8px;color:var(--dim)}
+.state-machine{display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+.sm-state{display:flex;align-items:center;gap:6px;padding:4px 7px;border-radius:6px;border:1px solid transparent;font-size:9px;font-weight:600;color:var(--muted);transition:all .3s}
+.sm-state.done{color:var(--dim)}.sm-state.current{background:var(--bg3);border-color:var(--ev);color:var(--ev)}
+.sm-dot{width:6px;height:6px;border-radius:50%;background:var(--border2);flex-shrink:0;transition:background .3s}
+.sm-state.done .sm-dot{background:var(--dim)}.sm-state.current .sm-dot{background:var(--ev);box-shadow:0 0 5px var(--ev)}
+
+/* ── CENTER PANEL ── */
+.center-panel{background:var(--bg1);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.flow-topbar{flex-shrink:0;display:flex;align-items:stretch;border-bottom:1px solid var(--border)}
+.flow-col-label{flex:1;display:flex;align-items:center;justify-content:center;padding:7px;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}
+.flow-col-label.ev{color:var(--ev);background:rgba(16,185,129,.05)}
+.flow-col-label.mid{color:var(--muted);flex:2;border-left:1px solid var(--border);border-right:1px solid var(--border)}
+.flow-col-label.evse{color:var(--evse);background:rgba(96,165,250,.05)}
+.flow-scroll{flex:1;overflow-y:auto;overflow-x:hidden;padding:3px 0;min-height:0}
+.flow-scroll::-webkit-scrollbar{width:4px}.flow-scroll::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+.flow-row{display:grid;grid-template-columns:1fr 2fr 1fr;border-bottom:1px solid rgba(37,45,69,.4);animation:fadeIn .2s ease;cursor:default}
+@keyframes fadeIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.flow-row:hover{background:rgba(255,255,255,.015)}
+.flow-cell-ev,.flow-cell-evse{padding:5px 7px;display:flex;align-items:center;font-size:9px;color:var(--dim);font-family:monospace}
+.flow-cell-ev{justify-content:flex-end}.flow-cell-evse{justify-content:flex-start}
+.flow-arrow-cell{display:flex;align-items:center;justify-content:center;padding:5px 3px}
+.flow-arrow{display:flex;align-items:center;width:100%;gap:0;font-size:9px;font-weight:700}
+.arrow-left-head,.arrow-right-head{font-size:10px;flex-shrink:0;line-height:1}
+.arrow-line-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px}
+.arrow-line{width:100%;height:1.5px}
+.arrow-action{font-size:9px;font-weight:700;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.arrow-layer{font-size:8px;font-weight:400;opacity:.6;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.dir-ev-to-evse .arrow-line,.dir-ev-to-evse .arrow-action,.dir-ev-to-evse .arrow-right-head{color:var(--ev)}
+.dir-ev-to-evse .arrow-line{background:var(--ev)}.dir-ev-to-evse .arrow-layer{color:var(--ev)}
+.dir-evse-to-ev .arrow-line{background:var(--evse)}.dir-evse-to-ev .arrow-action,.dir-evse-to-ev .arrow-left-head,.dir-evse-to-ev .arrow-layer{color:var(--evse)}
+.layer-tls .arrow-line{background:var(--tls)!important}.layer-tls .arrow-action,.layer-tls .arrow-layer,.layer-tls .arrow-left-head,.layer-tls .arrow-right-head{color:var(--tls)!important}
+.layer-udp .arrow-line{background:var(--purple)!important}.layer-udp .arrow-action,.layer-udp .arrow-layer,.layer-udp .arrow-left-head,.layer-udp .arrow-right-head{color:var(--purple)!important}
+.layer-tcp .arrow-line{background:var(--warn)!important}.layer-tcp .arrow-action,.layer-tcp .arrow-layer,.layer-tcp .arrow-left-head,.layer-tcp .arrow-right-head{color:var(--warn)!important}
+.layer-plc .arrow-line{background:#34d399!important}.layer-plc .arrow-action,.layer-plc .arrow-layer,.layer-plc .arrow-left-head,.layer-plc .arrow-right-head{color:#34d399!important}
+.layer-ipv6 .arrow-line{background:#38bdf8!important}.layer-ipv6 .arrow-action,.layer-ipv6 .arrow-layer,.layer-ipv6 .arrow-left-head,.layer-ipv6 .arrow-right-head{color:#38bdf8!important}
+.flow-expanded-content{display:none;grid-column:1/-1;background:var(--bg0);border-top:1px solid var(--border);padding:8px 12px;font-size:9px;line-height:1.6}
+.flow-row.expanded .flow-expanded-content{display:block}
+.flow-desc{color:var(--sys,#94a3b8);margin-bottom:6px;font-size:9px;line-height:1.65;font-style:italic;border-left:2px solid var(--border2);padding-left:8px}
+.flow-payload-label{font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;font-weight:700}
+.flow-payload{font-family:monospace;color:var(--dim);white-space:pre-wrap;word-break:break-all;font-size:9px}
+.flow-divider-row{grid-column:1/-1;display:flex;align-items:center;gap:7px;padding:3px 10px;background:rgba(16,185,129,.04);border-bottom:1px solid rgba(37,45,69,.6)}
+.flow-divider-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.flow-divider-label{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.flow-divider-ts{margin-left:auto;font-size:8px;color:var(--dim);font-family:monospace}
+.flow-empty{display:flex;align-items:center;justify-content:center;flex:1;color:var(--dim);font-size:11px;font-style:italic;padding:30px;text-align:center;line-height:1.7}
+
+/* ── BOTTOM SECTION ── */
+.bottom-section{flex-shrink:0;background:var(--bg1);border-top:1px solid var(--border);display:flex;flex-direction:column;height:185px}
+.bottom-tabbar{flex-shrink:0;display:flex;align-items:center;border-bottom:1px solid var(--border);padding:0 10px;gap:0}
+.bottom-tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--muted);font-size:10px;font-weight:700;padding:6px 14px 5px;cursor:pointer;border-radius:0;transition:color .15s,border-color .15s}
+.bottom-tab:hover{color:var(--text)}.bottom-tab.active{color:var(--text);border-bottom-color:var(--purple)}
+.bottom-tab-extra{margin-left:auto;display:flex;align-items:center;gap:10px}
+.speed-wrap{display:flex;align-items:center;gap:5px}
+.speed-label{font-size:9px;color:var(--muted)}
+.speed-btns{display:flex;gap:2px}
+.speed-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:4px;color:var(--muted);font-size:9px;font-weight:700;padding:2px 6px;cursor:pointer}
+.speed-btn.active{background:var(--bg2);border-color:var(--ev);color:var(--ev)}
+.speed-btn:hover{color:var(--text)}
+.bottom-content{flex:1;overflow:hidden;display:none}
+.bottom-content.active{display:flex;flex-direction:column}
+
+/* scope chart */
+.scope-chart-wrap{flex:1;padding:4px 10px 6px;display:flex;gap:8px;min-height:0}
+.scope-canvas-outer{flex:1;position:relative;min-height:0}
+.scope-canvas-outer canvas{position:absolute;inset:0;width:100%!important;height:100%!important}
+.scope-no-data{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-style:italic;font-size:10px;pointer-events:none}
+
+/* status bar */
+.status-bar{flex-shrink:0;background:var(--bg0);border-top:1px solid var(--border);height:26px;display:flex;align-items:center;gap:0;padding:0 12px;position:sticky;bottom:0;z-index:50}
+.sb-item{display:flex;align-items:center;gap:5px;padding:0 10px;border-right:1px solid var(--border)}
+.sb-item:first-child{padding-left:0}
+.sb-label{font-size:9px;color:var(--muted)}
+.sb-val{font-size:10px;font-weight:700;font-family:monospace}
+.sb-note{flex:1;font-size:9px;font-family:monospace;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:10px}
+</style>
+</head>
+<body>
+
+<!-- ══ TOP BAR ══ -->
+<div class="topbar">
+  <div><div class="topbar-title">ISO 15118 Charging Protocol Emulator</div>
+  <div class="topbar-sub">IEC 61851-1 CP Signal &nbsp;·&nbsp; V2GTP/TLS &nbsp;·&nbsp; ISO 15118-2 Application Layer</div></div>
+  <div class="topbar-sep"></div>
+
+  <div class="cfg-row">
+    <span class="cfg-label">Mode</span>
+    <select class="cfg-input" id="cfg-mode" style="width:auto">
+      <optgroup label="── AC Charging ──">
+        <option value="AC_L2_3P">AC L2 — 3Φ 230V/32A (22kW)</option>
+        <option value="AC_L2_1P" selected>AC L2 — 1Φ 240V/32A (7.7kW)</option>
+        <option value="AC_L1">AC L1 — 1Φ 120V/16A (1.9kW)</option>
+      </optgroup>
+      <optgroup label="── DC Fast Charging ──">
+        <option value="DC_50">DC CCS — 400V/125A (50kW)</option>
+        <option value="DC_150">DC DCFC — 800V/200A (160kW)</option>
+        <option value="DC_350">DC HPC — 1000V/350A (350kW)</option>
+      </optgroup>
+    </select>
+  </div>
+  <div class="cfg-row cfg-slider-row">
+    <span class="cfg-label">Start SoC</span>
+    <input type="range" class="cfg-slider" id="cfg-soc" min="0" max="99" value="20" oninput="document.getElementById('cfg-soc-val').textContent=this.value+'%';syncTargetMin()">
+    <span class="cfg-slider-val" id="cfg-soc-val">20%</span>
+  </div>
+  <div class="cfg-row cfg-slider-row">
+    <span class="cfg-label">Target SoC</span>
+    <input type="range" class="cfg-slider" id="cfg-target" min="10" max="100" value="80" oninput="document.getElementById('cfg-target-val').textContent=this.value+'%'">
+    <span class="cfg-slider-val" id="cfg-target-val">80%</span>
+  </div>
+  <div class="cfg-row"><span class="cfg-label">EV A</span><input class="cfg-input" id="cfg-ev-current" type="number" value="32" min="6" max="80"></div>
+  <div class="cfg-row"><span class="cfg-label">EVSE A</span><input class="cfg-input" id="cfg-evse-current" type="number" value="32" min="6" max="80"></div>
+  <label class="toggle"><input type="checkbox" id="cfg-tls" checked> TLS</label>
+  <div class="cfg-row auth-row">
+    <span class="cfg-label">Auth</span>
+    <button class="auth-btn active" id="auth-eim" onclick="setAuth('EIM')">EIM</button>
+    <button class="auth-btn" id="auth-pnc" onclick="setAuth('PnC')">PnC</button>
+  </div>
+
+  <span class="phase-pill" id="phase-pill">IDLE</span>
+  <button class="btn-start" id="btn-start" onclick="startSession()">▶ Start Session</button>
+  <button class="btn-stop"  id="btn-stop"  onclick="stopSession()">■ Stop</button>
+</div>
+
+<!-- ══ MAIN ══ -->
+<div class="main">
+
+  <!-- LEFT: EVSE -->
+  <div class="side-panel">
+    <div class="panel-heading evse">EVSE · SECC</div>
+    <div class="panel-sub-text">Supply Equipment Communication Controller</div>
+    <div class="divider"></div>
+    <div class="scope-label">Control Pilot Signal (IEC 61851-1)</div>
+    <canvas class="scope" id="cp-scope" width="420" height="72"></canvas>
+    <div class="cp-state-badge">
+      <div class="cp-state-left">
+        <div class="cp-state-label" id="cp-state-label" style="color:#64748b">State A</div>
+        <div class="cp-state-desc"  id="cp-state-desc">No Vehicle — +12V DC</div>
+      </div>
+      <div class="cp-state-right">
+        <div class="cp-duty" id="cp-duty">DC</div>
+        <div class="cp-duty-sub" id="cp-duty-sub">Duty Cycle</div>
+      </div>
+    </div>
+    <div class="metric-grid">
+      <div class="metric"><div class="metric-label">CP Voltage</div><div class="metric-val blue" id="cp-voltage">+12.0 V</div></div>
+      <div class="metric"><div class="metric-label">Max Current</div><div class="metric-val amber" id="cp-max-current">—</div></div>
+    </div>
+    <div class="divider"></div>
+    <div class="scope-label">EVSE State Machine</div>
+    <div class="state-machine" id="evse-sm">
+      <div class="sm-state current" data-s="idle">   <div class="sm-dot"></div>Idle / Standby</div>
+      <div class="sm-state" data-s="waiting"> <div class="sm-dot"></div>EV Detected (State B)</div>
+      <div class="sm-state" data-s="hlc">     <div class="sm-dot"></div>HLC Active — 5% PWM</div>
+      <div class="sm-state" data-s="auth">    <div class="sm-dot"></div>Authorization</div>
+      <div class="sm-state" data-s="charging"><div class="sm-dot"></div>Charging (State C)</div>
+      <div class="sm-state" data-s="stopping"><div class="sm-dot"></div>Session Stopping</div>
+    </div>
+  </div>
+
+  <!-- CENTER: V2G Flow -->
+  <div class="center-panel">
+    <div class="flow-topbar">
+      <div class="flow-col-label ev">EV &nbsp;/&nbsp; EVCC</div>
+      <div class="flow-col-label mid">ISO 15118-2 &nbsp;·&nbsp; V2G Communication Flow &nbsp;·&nbsp; <span style="color:var(--muted);font-size:8px">click any message to expand</span></div>
+      <div class="flow-col-label evse">EVSE &nbsp;/&nbsp; SECC</div>
+    </div>
+    <div class="flow-scroll" id="flow-scroll">
+      <div class="flow-empty" id="flow-empty">Configure session parameters above and click<br><strong style="color:var(--text)">▶ Start Session</strong><br>to watch the full ISO 15118 handshake in real time.<br><span style="font-size:9px;color:var(--dim)">Click any message row to see its description and payload.</span></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: EV -->
+  <div class="side-panel">
+    <div class="panel-heading ev">EV · EVCC</div>
+    <div class="panel-sub-text">Electric Vehicle Communication Controller</div>
+    <div class="divider"></div>
+    <div class="soc-wrap">
+      <div class="soc-header"><span class="soc-label">Battery SoC</span><span class="soc-pct" id="soc-pct">20.0%</span></div>
+      <div class="soc-bar-bg"><div class="soc-bar-fill" id="soc-bar" style="width:20%"></div></div>
+      <div class="soc-footer"><span class="soc-foot-label" id="soc-initial">Start: 20%</span><span class="soc-foot-label" id="soc-target-lbl">Target: 80%</span></div>
+    </div>
+    <div class="metric-grid">
+      <div class="metric"><div class="metric-label">Power</div><div class="metric-val green" id="m-power">0.0 kW</div></div>
+      <div class="metric"><div class="metric-label">Current</div><div class="metric-val blue" id="m-current">0 A</div></div>
+      <div class="metric"><div class="metric-label">Voltage</div><div class="metric-val amber" id="m-voltage">— V</div></div>
+      <div class="metric"><div class="metric-label">Energy</div><div class="metric-val purple" id="m-energy">0.000 kWh</div></div>
+    </div>
+    <div class="divider"></div>
+    <div class="scope-label">EV State Machine</div>
+    <div class="state-machine" id="ev-sm">
+      <div class="sm-state current" data-s="idle">    <div class="sm-dot"></div>Idle / Unplugged</div>
+      <div class="sm-state" data-s="waiting">  <div class="sm-dot"></div>Connected (State B)</div>
+      <div class="sm-state" data-s="hlc">      <div class="sm-dot"></div>HLC Discovery</div>
+      <div class="sm-state" data-s="auth">     <div class="sm-dot"></div>Authorization</div>
+      <div class="sm-state" data-s="charging"> <div class="sm-dot"></div>Charging (State C)</div>
+      <div class="sm-state" data-s="stopping"> <div class="sm-dot"></div>Session Stopping</div>
+    </div>
+    <div class="divider"></div>
+    <div class="metric-grid">
+      <div class="metric"><div class="metric-label">Session ID</div><div class="metric-val" id="m-session" style="font-size:8px;color:#64748b">—</div></div>
+      <div class="metric"><div class="metric-label">Mode</div><div class="metric-val" id="m-mode" style="font-size:9px;color:var(--purple)">—</div></div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<!-- ══ BOTTOM SECTION ══ -->
+<div class="bottom-section">
+  <div class="bottom-tabbar">
+    <button class="bottom-tab active" onclick="showTab('scope')">Charging Oscilloscope</button>
+    <button class="bottom-tab" onclick="showTab('summary')">Session Summary</button>
+    <div class="bottom-tab-extra">
+      <div class="speed-wrap">
+        <span class="speed-label">Speed</span>
+        <div class="speed-btns">
+          <button class="speed-btn" onclick="setSpeed(2.0,'0.5×')">0.5×</button>
+          <button class="speed-btn active" onclick="setSpeed(0.8,'1×')">1×</button>
+          <button class="speed-btn" onclick="setSpeed(0.35,'2×')">2×</button>
+          <button class="speed-btn" onclick="setSpeed(0.12,'5×')">5×</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Oscilloscope -->
+  <div class="bottom-content active" id="tab-scope">
+    <div class="scope-chart-wrap">
+      <div class="scope-canvas-outer">
+        <canvas id="charging-scope"></canvas>
+        <div class="scope-no-data" id="scope-no-data">No data — start a charging session to see Power, Current &amp; Energy over time</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Session Summary -->
+  <div class="bottom-content" id="tab-summary">
+    <div style="padding:8px 12px;display:grid;grid-template-columns:repeat(6,1fr);gap:6px;flex:1;align-content:start">
+      <div class="metric"><div class="metric-label">AC Mode</div><div class="metric-val" id="sum-mode" style="font-size:10px;color:var(--purple)">—</div></div>
+      <div class="metric"><div class="metric-label">Voltage</div><div class="metric-val amber" id="sum-voltage">— V</div></div>
+      <div class="metric"><div class="metric-label">Phases</div><div class="metric-val" id="sum-phases" style="color:var(--evse)">—</div></div>
+      <div class="metric"><div class="metric-label">Peak Power</div><div class="metric-val green" id="sum-peak-power">0.0 kW</div></div>
+      <div class="metric"><div class="metric-label">Total Energy</div><div class="metric-val purple" id="sum-energy">0.000 kWh</div></div>
+      <div class="metric"><div class="metric-label">Duration</div><div class="metric-val" id="sum-duration" style="color:var(--warn)">0:00</div></div>
+      <div class="metric"><div class="metric-label">Start SoC</div><div class="metric-val" id="sum-soc-start" style="color:var(--dim)">—</div></div>
+      <div class="metric"><div class="metric-label">End SoC</div><div class="metric-val green" id="sum-soc-end">—</div></div>
+      <div class="metric"><div class="metric-label">Max Current</div><div class="metric-val blue" id="sum-current">— A</div></div>
+      <div class="metric"><div class="metric-label">Session ID</div><div class="metric-val" id="sum-session" style="font-size:8px;color:#64748b">—</div></div>
+      <div class="metric"><div class="metric-label">TLS</div><div class="metric-val" id="sum-tls" style="color:var(--tls)">—</div></div>
+      <div class="metric"><div class="metric-label">V2G Messages</div><div class="metric-val" id="sum-msgs" style="color:var(--evse)">0</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ STATUS BAR ══ -->
+<div class="status-bar">
+  <div class="sb-item"><span class="sb-label">EVSE</span><span class="sb-val" id="sb-evse" style="color:#64748b">Idle</span></div>
+  <div class="sb-item"><span class="sb-label">EV</span><span class="sb-val" id="sb-ev" style="color:#64748b">Idle</span></div>
+  <div class="sb-item"><span class="sb-label">CP</span><span class="sb-val" id="sb-cp" style="color:#64748b">State A</span></div>
+  <span class="sb-note" id="sb-note">—</span>
+</div>
+
+<script>
+const socket = io();
+let sessionRunning = false;
+let cpState = 'A', cpDuty = 100, cpColor = '#64748b';
+let currentSpeed = 0.8;
+let msgCount = 0;
+let sessionStartTime = null;
+let durationTimer = null;
+let peakPower = 0;
+let lastSoC = 20;
+let startSoC = 20;
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.bottom-tab').forEach((b,i)=>b.classList.toggle('active',['scope','summary'][i]===name));
+  document.querySelectorAll('.bottom-content').forEach(el=>el.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  if (name==='scope') setTimeout(()=>chargingChart&&chargingChart.resize(),10);
+}
+
+// ── Speed ─────────────────────────────────────────────────────────────────────
+function setSpeed(d,lbl) {
+  currentSpeed=d;
+  document.querySelectorAll('.speed-btn').forEach(b=>b.classList.toggle('active',b.textContent===lbl));
+}
+
+// ── Session start/stop ────────────────────────────────────────────────────────
+function syncTargetMin() {
+  const soc = parseInt(document.getElementById('cfg-soc').value);
+  const tgt = document.getElementById('cfg-target');
+  tgt.min = Math.min(soc + 1, 100);
+  if (parseInt(tgt.value) <= soc) {
+    tgt.value = Math.min(soc + 10, 100);
+    document.getElementById('cfg-target-val').textContent = tgt.value + '%';
+  }
+}
+
+function startSession() {
+  if (sessionRunning) return;
+  clearFlow(); resetMeters(); resetChart();
+  msgCount = 0; peakPower = 0; sessionStartTime = Date.now();
+  startSoC = parseFloat(document.getElementById('cfg-soc').value);
+  sessionRunning = true;
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').classList.add('visible');
+  const mode = document.getElementById('cfg-mode').value;
+  const modeLabels = {
+    AC_L1:'AC Level 1 · 1Φ 120V', AC_L2_1P:'AC Level 2 · 1Φ 240V', AC_L2_3P:'AC Level 2 · 3Φ 230V',
+    DC_50:'DC CCS · 400V / 125A', DC_150:'DC DCFC · 800V / 200A', DC_350:'DC HPC · 1000V / 350A',
+  };
+  const isDC = mode.startsWith('DC_');
+  document.getElementById('m-mode').textContent = modeLabels[mode] || mode;
+  document.getElementById('m-mode').style.color = isDC ? '#f59e0b' : 'var(--purple)';
+  document.getElementById('sum-mode').textContent = modeLabels[mode] || mode;
+  document.querySelector('#sum-mode').parentElement.querySelector('.metric-label').textContent = isDC ? 'DC Mode' : 'AC Mode';
+  document.getElementById('sum-tls').textContent = document.getElementById('cfg-tls').checked ? 'Enabled' : 'Disabled';
+  document.getElementById('soc-initial').textContent = 'Start: '+startSoC+'%';
+  document.getElementById('soc-target-lbl').textContent = 'Target: '+document.getElementById('cfg-target').value+'%';
+  document.getElementById('sum-soc-start').textContent = startSoC+'%';
+  durationTimer = setInterval(updateDuration, 1000);
+  const authMode = document.getElementById('auth-pnc').classList.contains('active') ? 'PnC' : 'EIM';
+  document.getElementById('sum-tls').textContent = document.getElementById('cfg-tls').checked
+    ? (authMode === 'PnC' ? 'mTLS (PnC)' : 'Enabled') : 'Disabled';
+  socket.emit('start_session', {
+    initial_soc:        startSoC,
+    target_soc:         parseFloat(document.getElementById('cfg-target').value),
+    max_current_a:      parseFloat(document.getElementById('cfg-ev-current').value),
+    evse_max_current_a: parseFloat(document.getElementById('cfg-evse-current').value),
+    use_tls:            document.getElementById('cfg-tls').checked,
+    step_delay:         currentSpeed,
+    ac_mode:            mode,
+    auth_mode:          authMode,
+  });
+}
+
+function stopSession() { socket.emit('stop_session'); }
+
+let currentAuth = 'EIM';
+function setAuth(mode) {
+  currentAuth = mode;
+  const eim = document.getElementById('auth-eim');
+  const pnc = document.getElementById('auth-pnc');
+  eim.classList.toggle('active', mode === 'EIM');
+  eim.classList.toggle('eim',    mode === 'EIM');
+  pnc.classList.toggle('active', mode === 'PnC');
+  pnc.classList.toggle('pnc',    mode === 'PnC');
+}
+setAuth('EIM');
+
+function sessionEnded() {
+  sessionRunning = false;
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').classList.remove('visible');
+  setPhasePill('IDLE','#64748b');
+  clearInterval(durationTimer);
+  document.getElementById('sum-soc-end').textContent = lastSoC.toFixed(1)+'%';
+  document.getElementById('sum-msgs').textContent = msgCount;
+  document.getElementById('sum-session').textContent = document.getElementById('m-session').textContent;
+}
+
+function updateDuration() {
+  if (!sessionStartTime) return;
+  const s = Math.floor((Date.now()-sessionStartTime)/1000);
+  const m = Math.floor(s/60), sec = s%60;
+  document.getElementById('sum-duration').textContent = m+':'+(sec<10?'0':'')+sec;
+}
+
+// ── Flow ──────────────────────────────────────────────────────────────────────
+function clearFlow() {
+  document.getElementById('flow-scroll').innerHTML='';
+  lastPhase='';
+}
+function resetMeters() {
+  document.getElementById('m-power').textContent='0.0 kW';
+  document.getElementById('m-current').textContent='0 A';
+  document.getElementById('m-energy').textContent='0.000 kWh';
+  document.getElementById('soc-pct').textContent=document.getElementById('cfg-soc').value+'%';
+  document.getElementById('soc-bar').style.width=document.getElementById('cfg-soc').value+'%';
+  document.getElementById('sum-peak-power').textContent='0.0 kW';
+  document.getElementById('sum-energy').textContent='0.000 kWh';
+  document.getElementById('sum-duration').textContent='0:00';
+}
+
+function getLayerClass(l) {
+  if (!l) return '';
+  const lo=l.toLowerCase();
+  if (lo.includes('tls')) return 'layer-tls';
+  if (lo.includes('udp')) return 'layer-udp';
+  if (lo.includes('tcp')) return 'layer-tcp';
+  if (lo.includes('homeplug') || lo.includes('plc') || lo.includes('greenphy')) return 'layer-plc';
+  if (lo.includes('ipv6') || lo.includes('slaac')) return 'layer-ipv6';
+  return '';
+}
+
+const SLAC_IDS = new Set([
+  'slac_param_req','slac_param_cnf','slac_start_atten','slac_mnbc_sound',
+  'slac_atten_char','slac_atten_rsp','slac_match_req','slac_match_cnf','slac_ipv6_ll',
+]);
+
+let lastPhase='';
+const PHASE_META = {
+  connecting:{label:'Phase 1 — Physical Connection (IEC 61851-1)',color:'#f59e0b'},
+  slac:{label:'Phase 2 — SLAC Powerline Matching (IEC 61851-3 · HomePlug GreenPHY)',color:'#34d399'},
+  hlc:{label:'Phase 3 — High-Level Communication (SDP · TCP · TLS)',color:'#a78bfa'},
+  app:{label:'Phase 4 — ISO 15118-2 Application Layer (V2G Messages)',color:'#60a5fa'},
+  charging:{label:'Phase 5 — Charging Active (Power Delivery Loop)',color:'#10b981'},
+  stopping:{label:'Phase 6 — Session Stop Sequence',color:'#ef4444'},
+};
+
+function ensureDivider(phase, ts) {
+  if (phase===lastPhase) return;
+  lastPhase=phase;
+  const meta=PHASE_META[phase]||{label:phase,color:'#64748b'};
+  const scroll=document.getElementById('flow-scroll');
+  const el=document.createElement('div');
+  el.className='flow-row';
+  el.style.gridTemplateColumns='1fr';
+  el.innerHTML=`<div class="flow-divider-row"><div class="flow-divider-dot" style="background:${meta.color}"></div><div class="flow-divider-label" style="color:${meta.color}">${meta.label}</div><div class="flow-divider-ts">${ts}</div></div>`;
+  scroll.appendChild(el);
+  scroll.scrollTop=scroll.scrollHeight;
+}
+
+// DC-specific message IDs that belong to each phase
+const DC_HLC_IDS = new Set(['dc_charge_param_req','dc_charge_param_res','cable_check_req','cable_check_res','precharge_req','precharge_res']);
+const DC_CHARGING_IDS = new Set(['dc_power_delivery_start_req','dc_power_delivery_start_res','current_demand_req','current_demand_res']);
+const DC_STOP_IDS = new Set(['welding_detection_req','welding_detection_res']);
+
+function addFlowRow(ev) {
+  msgCount++;
+  const scroll=document.getElementById('flow-scroll');
+  const action=ev.action;
+  const id=ev.id||'';
+  let phase='app';
+  if (SLAC_IDS.has(id)) phase='slac';
+  else if (['SDP Request','SDP Response'].includes(action)||action==='TCP Connection'||action.includes('TLS')) phase='hlc';
+  else if (DC_HLC_IDS.has(id)) phase='hlc';
+  else if (DC_CHARGING_IDS.has(id)) phase='charging';
+  else if (DC_STOP_IDS.has(id)) phase='stopping';
+  else if (action.includes('[Stop]')||action==='SessionStopReq'||action==='SessionStopRes') phase='stopping';
+  else if (action.includes('[Start]')&&ev.direction==='evse→ev') phase='charging';
+  ensureDivider(phase, ev.ts);
+
+  const dir=ev.direction;
+  const dirCls=dir==='ev→evse'?'dir-ev-to-evse':'dir-evse-to-ev';
+  const layerCls=getLayerClass(ev.layer);
+
+  let leftCell, rightCell, arrowInner;
+  const tsSpan=`<span style="color:var(--dim)">${ev.ts}</span>`;
+  if (dir==='ev→evse') {
+    leftCell=`<div class="flow-cell-ev">${tsSpan}</div>`;
+    rightCell=`<div class="flow-cell-evse"></div>`;
+    arrowInner=`<div class="arrow-line-wrap"><div class="arrow-line"></div><div class="arrow-action">${esc(action)}</div><div class="arrow-layer">${esc(ev.layer)}</div></div><span class="arrow-right-head">▶</span>`;
+  } else {
+    leftCell=`<div class="flow-cell-ev"></div>`;
+    rightCell=`<div class="flow-cell-evse">${tsSpan}</div>`;
+    arrowInner=`<span class="arrow-left-head">◀</span><div class="arrow-line-wrap"><div class="arrow-line"></div><div class="arrow-action">${esc(action)}</div><div class="arrow-layer">${esc(ev.layer)}</div></div>`;
+  }
+
+  const descHtml = ev.description
+    ? `<div class="flow-desc">${esc(ev.description)}</div>`
+    : '';
+  const payloadStr = ev.details && Object.keys(ev.details).length
+    ? JSON.stringify(ev.details, null, 2)
+    : '(no payload)';
+
+  const row=document.createElement('div');
+  row.className=`flow-row ${dirCls} ${layerCls}`;
+  row.innerHTML=`
+    ${leftCell}
+    <div class="flow-arrow-cell"><div class="flow-arrow">${arrowInner}</div></div>
+    ${rightCell}
+    <div class="flow-expanded-content">
+      ${descHtml}
+      <div class="flow-payload-label">Payload</div>
+      <div class="flow-payload">${esc(payloadStr)}</div>
+    </div>`;
+  row.addEventListener('click',()=>row.classList.toggle('expanded'));
+  scroll.appendChild(row);
+  scroll.scrollTop=scroll.scrollHeight;
+}
+
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+// ── CP Oscilloscope ───────────────────────────────────────────────────────────
+const cpCanvas=document.getElementById('cp-scope');
+const cpCtx=cpCanvas.getContext('2d');
+function drawCP() {
+  const W=cpCanvas.width, H=cpCanvas.height;
+  cpCtx.clearRect(0,0,W,H);
+  cpCtx.strokeStyle='rgba(37,45,69,0.7)'; cpCtx.lineWidth=1;
+  for(let x=0;x<=W;x+=W/8){cpCtx.beginPath();cpCtx.moveTo(x,0);cpCtx.lineTo(x,H);cpCtx.stroke()}
+  for(let y=0;y<=H;y+=H/4){cpCtx.beginPath();cpCtx.moveTo(0,y);cpCtx.lineTo(W,y);cpCtx.stroke()}
+  cpCtx.fillStyle='rgba(100,116,139,0.6)'; cpCtx.font='8px monospace';
+  cpCtx.fillText('+12V',3,10); cpCtx.fillText('  0V',3,H/2+4); cpCtx.fillText('-12V',3,H-3);
+  const hiY=H*.12, loY=H*.88;
+  const cycles=4, ppC=W/cycles;
+  cpCtx.beginPath(); cpCtx.strokeStyle=cpColor; cpCtx.lineWidth=2;
+  cpCtx.shadowColor=cpColor; cpCtx.shadowBlur=4;
+  for(let c=0;c<cycles;c++) {
+    const sx=c*ppC, hw=ppC*(cpDuty/100);
+    if(c===0) cpCtx.moveTo(sx,hiY); else cpCtx.lineTo(sx,hiY);
+    cpCtx.lineTo(sx+hw,hiY);
+    if(cpDuty<100){cpCtx.lineTo(sx+hw,loY);cpCtx.lineTo(sx+ppC,loY)}
+  }
+  cpCtx.stroke(); cpCtx.shadowBlur=0;
+  if(cpDuty<100){cpCtx.fillStyle=cpColor;cpCtx.font='bold 9px monospace';cpCtx.fillText(cpDuty+'%',W-32,13)}
+}
+(function loop(){drawCP();requestAnimationFrame(loop)})();
+
+// ── State machines ────────────────────────────────────────────────────────────
+const SM=['idle','waiting','hlc','auth','charging','stopping'];
+function highlightSM(id, cur) {
+  const idx=SM.indexOf(cur);
+  document.getElementById(id).querySelectorAll('.sm-state').forEach((el,i)=>{
+    el.className='sm-state';
+    if(i<idx) el.classList.add('done');
+    else if(i===idx) el.classList.add('current');
+  });
+}
+
+function setPhasePill(text,color) {
+  const el=document.getElementById('phase-pill');
+  el.textContent=text; el.style.color=color; el.style.borderColor=color;
+}
+
+// ── Charging Oscilloscope (Chart.js) ─────────────────────────────────────────
+let chargingChart=null;
+const scopeData={labels:[],power:[],current:[],energy:[]};
+
+function initChart() {
+  const ctx=document.getElementById('charging-scope').getContext('2d');
+  chargingChart=new Chart(ctx,{
+    type:'line',
+    data:{
+      labels:[],
+      datasets:[
+        {label:'Power (kW)',data:[],borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.12)',
+         yAxisID:'yPower',tension:.3,pointRadius:0,pointHoverRadius:4,fill:true,borderWidth:2},
+        {label:'Current (A)',data:[],borderColor:'#60a5fa',backgroundColor:'transparent',
+         yAxisID:'yCurrent',tension:.3,pointRadius:0,pointHoverRadius:4,borderWidth:1.5,borderDash:[3,2]},
+        {label:'Voltage (V)',data:[],borderColor:'#f59e0b',backgroundColor:'transparent',
+         yAxisID:'yVoltage',tension:.3,pointRadius:0,pointHoverRadius:4,borderWidth:1.5,borderDash:[6,3]},
+        {label:'Energy (kWh)',data:[],borderColor:'#a78bfa',backgroundColor:'transparent',
+         yAxisID:'yEnergy',tension:.3,pointRadius:0,pointHoverRadius:4,borderWidth:1.5},
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'top',labels:{color:'#94a3b8',font:{size:9},boxWidth:12,padding:10}},
+        tooltip:{backgroundColor:'#1e2438',titleColor:'#94a3b8',bodyColor:'#e2e8f0',
+                 borderColor:'#252d45',borderWidth:1,
+                 callbacks:{title:items=>{const s=items[0].label;const m=Math.floor(s/60),sec=s%60;return m+'m '+(sec<10?'0':'')+sec+'s elapsed';}}}
+      },
+      scales:{
+        x:{type:'linear',title:{display:true,text:'Elapsed Time (s)',color:'#475569',font:{size:9}},
+           ticks:{color:'#475569',font:{size:9},callback:v=>{const m=Math.floor(v/60),s=v%60;return m>0?m+'m'+(s?s+'s':''):s+'s'}},
+           grid:{color:'#1e2535'}},
+        yPower:{type:'linear',position:'left',title:{display:true,text:'Power (kW)',color:'#10b981',font:{size:9}},
+                ticks:{color:'#10b981',font:{size:9}},grid:{color:'#1e2535'},min:0},
+        yCurrent:{type:'linear',position:'right',title:{display:true,text:'Current (A)',color:'#60a5fa',font:{size:9}},
+                  ticks:{color:'#60a5fa',font:{size:9}},grid:{drawOnChartArea:false},min:0},
+        yVoltage:{type:'linear',position:'left',title:{display:true,text:'Voltage (V)',color:'#f59e0b',font:{size:9}},
+                  ticks:{color:'#f59e0b',font:{size:9}},grid:{drawOnChartArea:false},min:0,
+                  display:(ctx)=>ctx.chart.data.datasets[2].data.length>0},
+        yEnergy:{type:'linear',position:'right',title:{display:true,text:'Energy (kWh)',color:'#a78bfa',font:{size:9}},
+                 ticks:{color:'#a78bfa',font:{size:9}},grid:{drawOnChartArea:false},min:0},
+      }
+    }
+  });
+}
+
+function resetChart() {
+  if(!chargingChart) return;
+  chargingChart.data.labels=[];
+  chargingChart.data.datasets.forEach(ds=>ds.data=[]);
+  chargingChart.update('none');
+  document.getElementById('scope-no-data').style.display='flex';
+}
+
+function pushChartPoint(d) {
+  if(!chargingChart) return;
+  document.getElementById('scope-no-data').style.display='none';
+  const t=d.elapsed_s||0;
+  chargingChart.data.labels.push(t);
+  chargingChart.data.datasets[0].data.push(d.power_kw);
+  chargingChart.data.datasets[1].data.push(d.current_a);
+  chargingChart.data.datasets[2].data.push(d.voltage_v);
+  chargingChart.data.datasets[3].data.push(d.energy_kwh);
+  chargingChart.update('none');
+}
+
+// ── Socket events ─────────────────────────────────────────────────────────────
+socket.on('cp_update', d => {
+  cpState=d.state; cpDuty=d.duty_cycle; cpColor=d.color;
+  document.getElementById('cp-state-label').textContent='State '+d.state;
+  document.getElementById('cp-state-label').style.color=d.color;
+  document.getElementById('cp-state-desc').textContent=d.label;
+  document.getElementById('cp-voltage').textContent=(d.voltage>=0?'+':'')+d.voltage.toFixed(1)+' V';
+  document.getElementById('cp-voltage').style.color=d.color;
+  document.getElementById('cp-duty').textContent=d.duty_cycle===100?'DC':d.duty_cycle+'%';
+  document.getElementById('cp-duty-sub').textContent=d.duty_cycle===100?'No PWM':'Duty Cycle';
+  document.getElementById('sb-cp').textContent='State '+d.state+(d.duty_cycle<100?' · '+d.duty_cycle+'%':'');
+  document.getElementById('sb-cp').style.color=d.color;
+  const maxI=d.max_current_a;
+  const el=document.getElementById('cp-max-current');
+  if(maxI!=null){el.textContent=maxI+' A';el.style.color='#f59e0b'}
+  else if(d.duty_cycle===5){el.textContent='HLC mode';el.style.color='#a78bfa'}
+  else{el.textContent='—';el.style.color='#64748b'}
+});
+
+socket.on('v2g_msg', d => {
+  addFlowRow(d);
+  document.getElementById('sb-note').textContent='→ '+d.action+'  ['+d.layer+']';
+  if(d.id==='session_setup_res'&&d.details&&d.details.SessionID) {
+    document.getElementById('m-session').textContent=d.details.SessionID;
+    document.getElementById('m-session').style.color='#10b981';
+    document.getElementById('sum-session').textContent=d.details.SessionID;
+  }
+  if(['auth_res','charge_param_res','dc_charge_param_res'].includes(d.id)){highlightSM('evse-sm','auth');highlightSM('ev-sm','auth')}
+  if(['current_demand_res','dc_power_delivery_start_res'].includes(d.id)){highlightSM('evse-sm','charging');highlightSM('ev-sm','charging')}
+});
+
+socket.on('status_update', d => {
+  const cols={idle:'#64748b',connecting:'#f59e0b',hlc:'#a78bfa',charging:'#10b981',stopping:'#ef4444',app:'#60a5fa'};
+  const names={idle:'IDLE',connecting:'CONNECTING',hlc:'HLC',charging:'CHARGING',stopping:'STOPPING',app:'V2G'};
+  const col=cols[d.phase]||'#64748b';
+  setPhasePill(names[d.phase]||d.phase.toUpperCase(),col);
+  document.getElementById('sb-evse').textContent=d.evse_state; document.getElementById('sb-evse').style.color=col;
+  document.getElementById('sb-ev').textContent=d.ev_state;     document.getElementById('sb-ev').style.color=col;
+  if(d.note) document.getElementById('sb-note').textContent=d.note;
+  const sm={idle:'idle',connecting:'waiting',hlc:'hlc',app:'auth',charging:'charging',stopping:'stopping'}[d.phase]||'idle';
+  highlightSM('evse-sm',sm); highlightSM('ev-sm',sm);
+});
+
+socket.on('meter_update', d => {
+  document.getElementById('m-power').textContent=d.power_kw.toFixed(2)+' kW';
+  document.getElementById('m-current').textContent=d.current_a.toFixed(1)+' A';
+  document.getElementById('m-voltage').textContent=d.voltage_v+' V';
+  document.getElementById('m-energy').textContent=d.energy_kwh.toFixed(3)+' kWh';
+  document.getElementById('soc-pct').textContent=d.soc_pct.toFixed(1)+'%';
+  document.getElementById('soc-bar').style.width=Math.min(d.soc_pct,100)+'%';
+  document.getElementById('sum-energy').textContent=d.energy_kwh.toFixed(3)+' kWh';
+  document.getElementById('sum-voltage').textContent=d.voltage_v+' V';
+  document.getElementById('sum-phases').textContent=d.phases===0?'DC':d.phases+'Φ';
+  document.getElementById('sum-current').textContent=d.current_a.toFixed(1)+' A';
+  lastSoC=d.soc_pct;
+  if(d.power_kw>peakPower){peakPower=d.power_kw;document.getElementById('sum-peak-power').textContent=peakPower.toFixed(2)+' kW'}
+  if(d.elapsed_s>0||d.power_kw>0) pushChartPoint(d);
+});
+
+socket.on('session_ended', ()=>{
+  sessionEnded();
+  highlightSM('evse-sm','idle'); highlightSM('ev-sm','idle');
+  lastPhase='';
+  document.getElementById('sb-note').textContent='Session complete · '+document.getElementById('sum-energy').textContent+' delivered';
+});
+
+socket.on('session_error', d=>{
+  sessionEnded();
+  document.getElementById('sb-note').textContent='⚠ Error: '+d.error;
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+initChart();
+window.addEventListener('resize',()=>{if(chargingChart)chargingChart.resize()});
+</script>
+</body>
+</html>
