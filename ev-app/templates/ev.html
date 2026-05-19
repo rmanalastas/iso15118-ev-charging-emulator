@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EV · EVCC — ISO 15118 Emulator</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+:root{--bg1:#0f172a;--bg2:#1e293b;--bg3:#334155;--border:#334155;--border2:#475569;--text:#e2e8f0;--muted:#94a3b8;--ev:#60a5fa;--evse:#4ade80;--tls:#34d399;--purple:#a78bfa;--warn:#fbbf24;--red:#f87171;--orange:#fb923c}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg1);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+/* Topbar */
+.topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:8px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap}
+.topbar-title{font-size:15px;font-weight:700;color:var(--ev);letter-spacing:.3px;white-space:nowrap}
+.topbar-sub{font-size:10px;color:var(--muted);white-space:nowrap}
+.cfg-sep{width:1px;height:24px;background:var(--border2);flex-shrink:0}
+.cfg-label{font-size:10px;color:var(--muted);white-space:nowrap}
+.cfg-input{background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:12px;font-family:monospace;padding:4px 8px;outline:none;width:130px}
+.cfg-input:focus{border-color:var(--ev)}
+.cfg-select{background:var(--bg3);border:1px solid var(--border2);border-radius:5px;color:var(--text);font-size:11px;padding:3px 6px;outline:none}
+.cfg-slider{-webkit-appearance:none;appearance:none;width:70px;height:4px;border-radius:2px;background:var(--bg3);outline:none;cursor:pointer}
+.cfg-slider::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--ev);cursor:pointer;border:2px solid var(--bg1)}
+.cfg-val{font-size:11px;font-weight:700;font-family:monospace;color:var(--text);min-width:30px}
+.auth-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:4px;color:var(--muted);font-size:10px;font-weight:700;padding:3px 8px;cursor:pointer;transition:all .15s}
+.auth-btn.active-eim{background:rgba(96,165,250,.15);border-color:var(--ev);color:var(--ev)}
+.auth-btn.active-pnc{background:rgba(52,211,153,.15);border-color:var(--tls);color:var(--tls)}
+.btn-start{background:rgba(96,165,250,.15);border:1px solid var(--ev);border-radius:5px;color:var(--ev);font-size:11px;font-weight:700;padding:5px 14px;cursor:pointer;transition:all .15s;margin-left:auto}
+.btn-start:hover:not(:disabled){background:rgba(96,165,250,.25)}
+.btn-start:disabled{opacity:.4;cursor:not-allowed}
+.btn-stop{background:rgba(248,113,113,.15);border:1px solid var(--red);border-radius:5px;color:var(--red);font-size:11px;font-weight:700;padding:5px 12px;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .2s}
+.btn-stop.visible{opacity:1;pointer-events:auto}
+/* Layout */
+.main{flex:1;display:grid;grid-template-columns:190px 1fr 210px;gap:0;overflow:hidden}
+.panel{background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.panel-right{border-right:none;border-left:1px solid var(--border)}
+.panel-title{font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;padding:10px 12px 6px;border-bottom:1px solid var(--border)}
+/* State machine */
+.sm-list{padding:8px;display:flex;flex-direction:column;gap:3px;overflow-y:auto;flex:1}
+.sm-item{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:5px;font-size:11px;color:var(--muted);transition:all .25s}
+.sm-item.active{background:rgba(96,165,250,.12);color:var(--ev);font-weight:600}
+.sm-dot{width:7px;height:7px;border-radius:50%;background:var(--border2);flex-shrink:0;transition:background .25s}
+.sm-item.active .sm-dot{background:var(--ev);box-shadow:0 0 6px var(--ev)}
+/* Flow panel */
+.flow-panel{display:flex;flex-direction:column;overflow:hidden;background:var(--bg1)}
+.flow-header{padding:10px 16px 6px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;background:var(--bg2)}
+.flow-list{flex:1;overflow-y:auto;padding:6px}
+.flow-list::-webkit-scrollbar{width:4px}
+.flow-list::-webkit-scrollbar-track{background:var(--bg1)}
+.flow-list::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+/* Message rows */
+.msg-row{border-radius:6px;margin-bottom:3px;cursor:pointer;transition:background .15s;border:1px solid transparent}
+.msg-row:hover{background:var(--bg2)}
+.msg-row.expanded{background:var(--bg2);border-color:var(--border2)}
+.msg-head{display:flex;align-items:center;gap:8px;padding:6px 10px}
+.msg-dir{font-size:10px;font-weight:700;width:68px;flex-shrink:0}
+.dir-ev{color:var(--ev)}
+.dir-evse{color:var(--evse)}
+.dir-sys{color:var(--purple)}
+.msg-layer{font-size:9px;color:var(--muted);background:var(--bg3);border-radius:3px;padding:1px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
+.msg-action{font-size:12px;font-weight:600;flex:1}
+.msg-body{padding:0 10px 8px 86px;font-size:11px;line-height:1.5;color:var(--muted);display:none}
+.msg-row.expanded .msg-body{display:block}
+.msg-desc{color:#cbd5e1;margin-bottom:6px}
+.detail-grid{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-family:monospace;font-size:10px}
+.detail-key{color:var(--muted)}
+.detail-val{color:var(--warn)}
+/* Right panel — meters */
+.meter-panel{padding:10px;display:flex;flex-direction:column;gap:8px;overflow-y:auto}
+.meter-card{background:var(--bg1);border:1px solid var(--border);border-radius:7px;padding:10px 12px}
+.meter-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px}
+.meter-value{font-size:20px;font-weight:700;font-family:monospace;color:var(--text)}
+.meter-unit{font-size:12px;color:var(--muted);font-weight:400}
+/* SoC bar */
+.soc-bar-bg{height:8px;background:var(--bg3);border-radius:4px;overflow:hidden;margin-top:6px}
+.soc-bar-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--ev),var(--tls));transition:width .5s}
+.soc-labels{display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-top:3px}
+/* Status bar */
+.statusbar{background:var(--bg2);border-top:1px solid var(--border);padding:5px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;min-height:28px}
+.status-phase{font-size:10px;font-weight:700;padding:2px 7px;border-radius:3px;background:var(--bg3);color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.status-state{font-size:11px;font-weight:600;color:var(--text)}
+.status-note{font-size:10px;color:var(--muted);flex:1}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div>
+    <div class="topbar-title">EV · EVCC</div>
+    <div class="topbar-sub">ISO 15118-2 Vehicle Emulator</div>
+  </div>
+  <div class="cfg-sep"></div>
+  <span class="cfg-label">EVSE IP</span>
+  <input class="cfg-input" id="cfg-ip" type="text" placeholder="e.g. 192.168.1.10" value="">
+  <div class="cfg-sep"></div>
+  <span class="cfg-label">Mode</span>
+  <select class="cfg-select" id="cfg-mode">
+    <optgroup label="AC">
+      <option value="AC_L1">AC Level 1 · 1Φ 120V/16A (1.9 kW)</option>
+      <option value="AC_L2_1P" selected>AC Level 2 · 1Φ 240V/32A (7.4 kW)</option>
+      <option value="AC_L2_3P">AC Level 2 · 3Φ 230V/32A (22 kW)</option>
+    </optgroup>
+    <optgroup label="DC">
+      <option value="DC_50">DC CCS · 400V/125A (50 kW)</option>
+      <option value="DC_150">DC DCFC · 800V/200A (160 kW)</option>
+      <option value="DC_350">DC HPC · 1000V/350A (350 kW)</option>
+    </optgroup>
+  </select>
+  <div class="cfg-sep"></div>
+  <span class="cfg-label">Start SoC</span>
+  <input type="range" class="cfg-slider" id="cfg-soc" min="0" max="99" value="20" oninput="document.getElementById('cfg-soc-v').textContent=this.value+'%';syncTarget()">
+  <span class="cfg-val" id="cfg-soc-v">20%</span>
+  <span class="cfg-label">Target</span>
+  <input type="range" class="cfg-slider" id="cfg-target" min="10" max="100" value="80" oninput="document.getElementById('cfg-target-v').textContent=this.value+'%'">
+  <span class="cfg-val" id="cfg-target-v">80%</span>
+  <div class="cfg-sep"></div>
+  <span class="cfg-label">Auth</span>
+  <button class="auth-btn active-eim" id="auth-eim" onclick="setAuth('EIM')">EIM</button>
+  <button class="auth-btn" id="auth-pnc" onclick="setAuth('PnC')">PnC</button>
+  <button class="btn-start" id="btn-start" onclick="startSession()">▶ Connect</button>
+  <button class="btn-stop"  id="btn-stop"  onclick="stopSession()">■ Stop</button>
+</div>
+
+<div class="main">
+  <!-- Left: state machine -->
+  <div class="panel">
+    <div class="panel-title">EV State Machine</div>
+    <div class="sm-list">
+      <div class="sm-item active" id="sm-idle"><div class="sm-dot"></div>Idle / Unplugged</div>
+      <div class="sm-item" id="sm-slac"><div class="sm-dot"></div>SLAC · PLC Matching</div>
+      <div class="sm-item" id="sm-hlc"><div class="sm-dot"></div>IPv6 · SDP · TCP · TLS</div>
+      <div class="sm-item" id="sm-app"><div class="sm-dot"></div>ISO 15118 Handshake</div>
+      <div class="sm-item" id="sm-charging"><div class="sm-dot"></div>Charging</div>
+      <div class="sm-item" id="sm-stopping"><div class="sm-dot"></div>Session Stopping</div>
+    </div>
+    <div style="padding:10px;border-top:1px solid var(--border)">
+      <div class="meter-label">Session ID</div>
+      <div style="font-size:10px;font-family:monospace;color:var(--warn);word-break:break-all;margin-top:3px" id="m-session">—</div>
+    </div>
+  </div>
+
+  <!-- Center: message flow -->
+  <div class="flow-panel">
+    <div class="flow-header">V2G Message Flow — Click any row to expand · Sent (blue) / Received (green)</div>
+    <div class="flow-list" id="flow-list">
+      <div style="color:var(--muted);font-size:12px;padding:30px;text-align:center">
+        Enter the EVSE IP address and click <strong>▶ Connect</strong><br>
+        <span style="font-size:10px;display:block;margin-top:6px">All ISO 15118-2 messages will appear here in real time</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: meters -->
+  <div class="panel panel-right">
+    <div class="panel-title">EV Meters</div>
+    <div class="meter-panel">
+      <div class="meter-card">
+        <div class="meter-label">Battery SoC</div>
+        <div class="meter-value" id="m-soc" style="color:var(--ev)">20.0 <span class="meter-unit">%</span></div>
+        <div class="soc-bar-bg"><div class="soc-bar-fill" id="soc-bar" style="width:20%"></div></div>
+        <div class="soc-labels"><span id="soc-start-lbl">Start: 20%</span><span id="soc-target-lbl">Target: 80%</span></div>
+      </div>
+      <div class="meter-card">
+        <div class="meter-label">Charging Power</div>
+        <div class="meter-value" id="m-power" style="color:var(--evse)">0.0 <span class="meter-unit">kW</span></div>
+      </div>
+      <div class="meter-card">
+        <div class="meter-label">Current</div>
+        <div class="meter-value" id="m-current">0 <span class="meter-unit">A</span></div>
+      </div>
+      <div class="meter-card">
+        <div class="meter-label">Voltage</div>
+        <div class="meter-value" id="m-voltage">— <span class="meter-unit">V</span></div>
+      </div>
+      <div class="meter-card">
+        <div class="meter-label">Energy Added</div>
+        <div class="meter-value" id="m-energy">0.000 <span class="meter-unit">kWh</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="statusbar">
+  <span class="status-phase" id="st-phase">IDLE</span>
+  <span class="status-state" id="st-state">Disconnected</span>
+  <span class="status-note" id="st-note">Enter EVSE IP and click Connect</span>
+</div>
+
+<script>
+const socket = io();
+let running = false;
+let msgCount = 0;
+let currentAuth = 'EIM';
+
+function setAuth(mode) {
+  currentAuth = mode;
+  document.getElementById('auth-eim').className = 'auth-btn' + (mode==='EIM'?' active-eim':'');
+  document.getElementById('auth-pnc').className = 'auth-btn' + (mode==='PnC'?' active-pnc':'');
+}
+
+function syncTarget() {
+  const s = +document.getElementById('cfg-soc').value;
+  const t = document.getElementById('cfg-target');
+  if (+t.value <= s) { t.value = Math.min(s+5, 100); document.getElementById('cfg-target-v').textContent = t.value+'%'; }
+}
+
+function startSession() {
+  const ip = document.getElementById('cfg-ip').value.trim();
+  if (!ip) { alert('Enter the EVSE IP address first.'); return; }
+  if (running) return;
+  running = true;
+  msgCount = 0;
+  document.getElementById('flow-list').innerHTML = '';
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').classList.add('visible');
+
+  const soc = +document.getElementById('cfg-soc').value;
+  document.getElementById('soc-start-lbl').textContent = 'Start: '+soc+'%';
+  document.getElementById('soc-target-lbl').textContent = 'Target: '+document.getElementById('cfg-target').value+'%';
+  document.getElementById('m-soc').innerHTML = soc.toFixed(1) + ' <span class="meter-unit">%</span>';
+  document.getElementById('soc-bar').style.width = soc + '%';
+
+  socket.emit('start_session', {
+    evse_ip:     ip,
+    auth_mode:   currentAuth,
+    initial_soc: soc,
+    target_soc:  +document.getElementById('cfg-target').value,
+    ac_mode:     document.getElementById('cfg-mode').value,
+  });
+}
+
+function stopSession() { socket.emit('stop_session'); }
+
+socket.on('status', d => {
+  document.getElementById('st-phase').textContent = d.phase.toUpperCase();
+  document.getElementById('st-state').textContent = d.state;
+  document.getElementById('st-note').textContent  = d.note || '';
+  updateSM(d.phase);
+});
+
+socket.on('connected', () => {});
+socket.on('session_id', d => { document.getElementById('m-session').textContent = d.session_id || '—'; });
+
+socket.on('charging_start', d => {
+  if (d.voltage_v) document.getElementById('m-voltage').innerHTML = (+d.voltage_v).toFixed(0) + ' <span class="meter-unit">V</span>';
+  if (d.current_a) document.getElementById('m-current').innerHTML = (+d.current_a).toFixed(1) + ' <span class="meter-unit">A</span>';
+  if (d.power_kw)  document.getElementById('m-power').innerHTML   = (+d.power_kw).toFixed(2)  + ' <span class="meter-unit">kW</span>';
+});
+
+socket.on('meter_update', d => {
+  document.getElementById('m-soc').innerHTML    = d.soc.toFixed(1)       + ' <span class="meter-unit">%</span>';
+  document.getElementById('soc-bar').style.width = d.soc + '%';
+  document.getElementById('m-power').innerHTML  = d.power_kw.toFixed(2)  + ' <span class="meter-unit">kW</span>';
+  document.getElementById('m-current').innerHTML = d.current_a.toFixed(1) + ' <span class="meter-unit">A</span>';
+  document.getElementById('m-voltage').innerHTML = d.voltage_v.toFixed(0) + ' <span class="meter-unit">V</span>';
+  document.getElementById('m-energy').innerHTML  = d.energy_kwh.toFixed(3) + ' <span class="meter-unit">kWh</span>';
+});
+
+socket.on('session_ended', d => {
+  running = false;
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').classList.remove('visible');
+  updateSM('idle');
+  document.getElementById('st-phase').textContent = 'IDLE';
+  if (d && d.energy_kwh !== undefined) {
+    document.getElementById('st-note').textContent = `Session complete — ${d.energy_kwh} kWh delivered · Final SoC ${d.final_soc}%`;
+  }
+});
+
+socket.on('v2g_msg', d => addMessage(d));
+
+function updateSM(phase) {
+  const map = {idle:'sm-idle', connecting:'sm-idle', slac:'sm-slac', hlc:'sm-hlc', app:'sm-app', charging:'sm-charging', stopping:'sm-stopping', error:'sm-idle'};
+  document.querySelectorAll('.sm-item').forEach(el => el.classList.remove('active'));
+  const id = map[phase];
+  if (id) document.getElementById(id).classList.add('active');
+}
+
+function addMessage(d) {
+  const list = document.getElementById('flow-list');
+  msgCount++;
+
+  const isEV  = d.direction === 'ev→evse';
+  const isSys = d.direction === 'system';
+  const dirCls = isSys ? 'dir-sys' : (isEV ? 'dir-ev' : 'dir-evse');
+  const dirLbl = isSys ? '◆ SYS'   : (isEV ? 'EV →'   : '← EVSE');
+
+  let detailHTML = '';
+  if (d.details && typeof d.details === 'object' && Object.keys(d.details).length) {
+    const flat = flattenObj(d.details);
+    detailHTML = '<div class="detail-grid">' +
+      Object.entries(flat).map(([k,v]) =>
+        `<span class="detail-key">${k}</span><span class="detail-val">${v}</span>`
+      ).join('') + '</div>';
+  }
+
+  const row = document.createElement('div');
+  row.className = 'msg-row';
+  row.innerHTML = `
+    <div class="msg-head">
+      <span class="msg-dir ${dirCls}">${dirLbl}</span>
+      <span class="msg-layer">${d.layer || ''}</span>
+      <span class="msg-action">${d.action}</span>
+    </div>
+    <div class="msg-body">
+      <div class="msg-desc">${d.description || ''}</div>
+      ${detailHTML}
+    </div>`;
+  row.querySelector('.msg-head').onclick = () => row.classList.toggle('expanded');
+  list.appendChild(row);
+  list.scrollTop = list.scrollHeight;
+}
+
+function flattenObj(obj, prefix='') {
+  const out = {};
+  for (const [k,v] of Object.entries(obj)) {
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      Object.assign(out, flattenObj(v, key));
+    } else {
+      out[key] = Array.isArray(v) ? v.join(', ') : String(v);
+    }
+  }
+  return out;
+}
+</script>
+</body>
+</html>
