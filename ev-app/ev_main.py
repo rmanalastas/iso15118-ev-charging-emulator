@@ -322,9 +322,10 @@ def handle_start(data):
         return
     _session.running = True
     _session.stop_event.clear()
+    evse_ip = data["evse_ip"].split(":")[0].strip()
     threading.Thread(
         target=run_session,
-        args=(data["evse_ip"], data.get("auth_mode", "EIM"),
+        args=(evse_ip, data.get("auth_mode", "EIM"),
               data.get("initial_soc", 20), data.get("target_soc", 80),
               data.get("ac_mode", "AC_L2_1P")),
         daemon=True,
