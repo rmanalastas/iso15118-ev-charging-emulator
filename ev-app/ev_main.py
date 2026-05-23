@@ -339,8 +339,7 @@ def index():
     return render_template("ev.html")
 
 if __name__ == "__main__":
-    raw_port = os.environ.get("PORT", "5000")
-    port = int(raw_port.split(":")[0])
+    port = 5000
     print(f"\n  EV Client")
     print(f"  Browser UI  →  http://localhost:{port}\n")
     socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True)
