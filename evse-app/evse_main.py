@@ -305,8 +305,7 @@ def on_connect():
     socketio.emit("local_ip", {"ip": LOCAL_IP})
 
 if __name__ == "__main__":
-    raw_port = os.environ.get("PORT", "5001")
-    port = int(raw_port.split(":")[0])
+    port = 5001
     print(f"\n  EVSE Server")
     print(f"  Browser UI  →  http://localhost:{port}")
     print(f"  Tell EV operator: IP = {LOCAL_IP}, port 15118\n")
