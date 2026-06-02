@@ -811,22 +811,38 @@ class ISO15118Simulator:
         if not self._sleep(d * 0.55): return self._do_stop_sequence()
 
         # PreCharge — ramp EVSE voltage to battery voltage
-        self._emit_status("hlc", "Pre-Charge", "Pre-Charging",
-                          f"EVSE ramping output to battery voltage ({self.voltage_v:.0f}V) before contactor close")
-        evse_v = max_v * 0.3   # start low
         target_v = self.voltage_v
+        self._emit_status("hlc", "Pre-Charge", "Pre-Charging",
+                          f"EVSE ramping output to battery voltage ({target_v:.0f}V) before contactor close")
         self._emit_msg(DC_CHARGE_PARAM_MESSAGES[4], {
             "EVTargetVoltage": f"{target_v:.0f} V", "EVTargetCurrent": "2 A",
         })
-        if not self._sleep(d * 0.6): return self._do_stop_sequence()
-        # show one intermediate PreChargeRes
-        mid_v = target_v * 0.6
-        self._emit_msg(DC_CHARGE_PARAM_MESSAGES[5], {"EVSEPresentVoltage": f"{mid_v:.0f} V (ramping…)"})
-        if not self._sleep(d * 0.6): return self._do_stop_sequence()
-        self._emit_msg(DC_CHARGE_PARAM_MESSAGES[4], {"EVTargetVoltage": f"{target_v:.0f} V", "EVTargetCurrent": "2 A"})
-        if not self._sleep(d * 0.5): return self._do_stop_sequence()
-        self._emit_msg(DC_CHARGE_PARAM_MESSAGES[5], {"EVSEPresentVoltage": f"{target_v:.0f} V (matched — contactor closing)"})
-        if not self._sleep(d * 0.5): return self._do_stop_sequence()
+
+        # Ramp self.voltage_v from 30% up to battery voltage in steps so the
+        # oscilloscope and meter display show the actual voltage climbing.
+        ramp_start = max_v * 0.30
+        self.voltage_v = round(ramp_start, 1)
+        self.current_a = 2.0   # pre-charge current is limited to 2 A
+        self.power_kw  = round(self.voltage_v * self.current_a / 1000.0, 3)
+        self._emit_meter()
+
+        n_steps = 8
+        for step in range(1, n_steps + 1):
+            frac = step / n_steps
+            self.voltage_v = round(ramp_start + (target_v - ramp_start) * frac, 1)
+            self.power_kw  = round(self.voltage_v * self.current_a / 1000.0, 3)
+            self._emit_meter()
+            # emit a PreChargeRes message at the midpoint and at the end
+            if step == n_steps // 2:
+                self._emit_msg(DC_CHARGE_PARAM_MESSAGES[5],
+                               {"EVSEPresentVoltage": f"{self.voltage_v:.0f} V (ramping…)"})
+            if not self._sleep(d * 0.25): return self._do_stop_sequence()
+
+        self._emit_msg(DC_CHARGE_PARAM_MESSAGES[5],
+                       {"EVSEPresentVoltage": f"{target_v:.0f} V (matched — contactor closing)"})
+        self.voltage_v = round(target_v, 1)
+        self._emit_meter()
+        if not self._sleep(d * 0.4): return self._do_stop_sequence()
 
         # PowerDelivery [Start]
         self._emit_msg(DC_CHARGE_PARAM_MESSAGES[6])
