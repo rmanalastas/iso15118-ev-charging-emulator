@@ -963,17 +963,16 @@ class ISO15118Simulator:
             time.sleep(interval)
             if not self.charging: break
 
-            # Battery voltage model: rises linearly from 75% to 100% of max_v
-            batt_v = max_v * (0.75 + 0.25 * self.soc_pct / 100.0)
-            self.voltage_v = round(batt_v, 1)
-
             if self.soc_pct < cv_start:
-                # CC phase — full current
+                # CC phase — constant current, voltage rises with battery SoC
                 self.current_a = round(max_a, 1)
+                batt_v = max_v * (0.75 + 0.25 * self.soc_pct / 100.0)
+                self.voltage_v = round(batt_v, 1)
                 phase_note = "CC"
             else:
-                # CV phase — taper current linearly
-                taper = 1.0 - (self.soc_pct - cv_start) / (self.target_soc - cv_start + 1e-6)
+                # CV phase — voltage held constant at max pack voltage, current tapers
+                self.voltage_v = round(max_v, 1)
+                taper = 1.0 - (self.soc_pct - cv_start) / max(self.target_soc - cv_start, 1e-6)
                 self.current_a = round(max(max_a * taper, max_a * 0.05), 1)
                 phase_note = "CV"
 
